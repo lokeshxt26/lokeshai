@@ -1,0 +1,9 @@
+{
+  "appId": "com.askme.ai",
+  "appName": "AskMe",
+  "webDir": "dist",
+  "bundledWebRuntime": false,
+  "server": {
+    "cleartext": true
+  }
+}
