@@ -4,6 +4,7 @@ export interface User {
   id: string;
   name: string;
   email: string;
+  password?: string;
   avatar?: string;
   createdAt: string;
 }
@@ -13,6 +14,7 @@ export interface Message {
   role: 'user' | 'assistant' | 'system';
   content: string;
   timestamp: number;
+  image?: string; // Base64 data URL for image doubt/question
   modelUsed?: string;
   isStreaming?: boolean;
   error?: boolean;
@@ -20,6 +22,7 @@ export interface Message {
 
 export interface ChatSession {
   id: string;
+  userId?: string; // Bound to user account
   title: string;
   messages: Message[];
   createdAt: number;
@@ -35,4 +38,5 @@ export interface AISettings {
   openaiModel: string;
   systemPrompt: string;
   temperature: number;
+  speechLanguage: 'te-IN' | 'en-IN' | 'en-US';
 }

@@ -20,7 +20,7 @@ function aiBackendPlugin(): Plugin {
         req.on('end', async () => {
           try {
             const data = JSON.parse(body || '{}')
-            const { messages, systemPrompt, prompt } = data
+            const { messages, systemPrompt, prompt, image } = data
 
             const payloadMessages: any[] = []
             if (systemPrompt) {
@@ -34,19 +34,19 @@ function aiBackendPlugin(): Plugin {
                 })
               }
             }
-            if (prompt) {
-              payloadMessages.push({ role: 'user', content: prompt })
-            }
+
+            const userPromptText = prompt || (image ? 'Please analyze this image, answer questions, and solve doubts step by step.' : 'Hello')
+            payloadMessages.push({ role: 'user', content: userPromptText })
 
             const aiResponse = await fetch('https://text.pollinations.ai/', {
               method: 'POST',
               headers: {
                 'Content-Type': 'application/json',
-                'User-Agent': 'AskMe-Mobile/1.0',
+                'User-Agent': 'AskMe-Mobile-AI/1.0',
               },
               body: JSON.stringify({
                 messages: payloadMessages,
-                model: 'openai',
+                model: 'openai-fast',
                 seed: Math.floor(Math.random() * 100000),
               }),
             })

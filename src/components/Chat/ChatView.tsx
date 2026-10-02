@@ -6,6 +6,7 @@ import { ChatInput } from './ChatInput';
 import { ChatSuggestions } from './ChatSuggestions';
 import { SidebarDrawer } from '../Sidebar/SidebarDrawer';
 import { SettingsModal } from '../Settings/SettingsModal';
+import { ApkDownloadModal } from '../Apk/ApkDownloadModal';
 import { ArrowDown, AlertCircle } from 'lucide-react';
 
 interface ChatViewProps {
@@ -20,12 +21,25 @@ export const ChatView: React.FC<ChatViewProps> = ({
   const { currentSession, activeError, clearError } = useChat();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [apkModalOpen, setApkModalOpen] = useState(false);
   const [showScrollBottom, setShowScrollBottom] = useState(false);
+  const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
 
   const messages = currentSession?.messages || [];
+
+  // Capture PWA install prompt on Android
+  useEffect(() => {
+    const handleBeforeInstallPrompt = (e: any) => {
+      e.preventDefault();
+      setDeferredPrompt(e);
+    };
+
+    window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+    return () => window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+  }, []);
 
   // Scroll to bottom whenever messages update
   const scrollToBottom = (behavior: ScrollBehavior = 'smooth') => {
@@ -50,6 +64,7 @@ export const ChatView: React.FC<ChatViewProps> = ({
       <ChatHeader
         onToggleSidebar={() => setSidebarOpen(true)}
         onOpenSettings={() => setSettingsOpen(true)}
+        onOpenApkModal={() => setApkModalOpen(true)}
         isMobileMockup={isMobileMockup}
         onToggleMobileMockup={onToggleMobileMockup}
       />
@@ -119,12 +134,20 @@ export const ChatView: React.FC<ChatViewProps> = ({
         isOpen={sidebarOpen}
         onClose={() => setSidebarOpen(false)}
         onOpenSettings={() => setSettingsOpen(true)}
+        onOpenApkModal={() => setApkModalOpen(true)}
       />
 
       {/* Settings Modal */}
       <SettingsModal
         isOpen={settingsOpen}
         onClose={() => setSettingsOpen(false)}
+      />
+
+      {/* Android APK / App Download Modal */}
+      <ApkDownloadModal
+        isOpen={apkModalOpen}
+        onClose={() => setApkModalOpen(false)}
+        deferredPrompt={deferredPrompt}
       />
     </div>
   );

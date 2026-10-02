@@ -11,18 +11,21 @@ import {
   LogOut,
   Bot,
   Settings,
+  Smartphone,
 } from 'lucide-react';
 
 interface SidebarDrawerProps {
   isOpen: boolean;
   onClose: () => void;
   onOpenSettings: () => void;
+  onOpenApkModal: () => void;
 }
 
 export const SidebarDrawer: React.FC<SidebarDrawerProps> = ({
   isOpen,
   onClose,
   onOpenSettings,
+  onOpenApkModal,
 }) => {
   const {
     sessions,
@@ -208,6 +211,20 @@ export const SidebarDrawer: React.FC<SidebarDrawerProps> = ({
             </button>
           </div>
         )}
+
+        {/* Android App / APK Download banner */}
+        <div className="p-2 border-t border-neutral-800/60 bg-emerald-950/20">
+          <button
+            onClick={() => {
+              onClose();
+              onOpenApkModal();
+            }}
+            className="w-full py-2 px-3 rounded-xl bg-emerald-600/20 hover:bg-emerald-600/30 border border-emerald-500/30 text-emerald-300 text-xs font-medium flex items-center justify-center gap-2 transition"
+          >
+            <Smartphone className="w-3.5 h-3.5 text-emerald-400" />
+            <span>Install / Download Android APK</span>
+          </button>
+        </div>
 
         {/* User Profile & Actions Footer */}
         <div className="p-3 border-t border-neutral-800/80 bg-neutral-900/40">

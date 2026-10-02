@@ -6,58 +6,71 @@ export const DEFAULT_AI_SETTINGS: AISettings = {
   openaiApiKey: import.meta.env.VITE_OPENAI_API_KEY || '',
   geminiModel: 'gemini-1.5-flash',
   openaiModel: 'gpt-4o-mini',
-  systemPrompt: `You are "AskMe", an advanced, helpful, and friendly AI mobile assistant.
+  systemPrompt: `You are "AskMe", an expert, friendly, and highly intelligent multilingual AI mobile assistant.
 
-CRITICAL LANGUAGE RULES:
-1. ALWAYS detect the language of the user's prompt and respond in the EXACT SAME LANGUAGE.
-2. If the user asks in Telugu (తెలుగు), respond in natural, polite Telugu script.
-3. If the user asks in Telugu written in English alphabet (Manglish e.g., "ela unnaru", "naku help kavali"), respond warmly in Telugu / Manglish.
-4. If the user asks in English, respond in English.
-5. If the user asks in Hindi, respond in Hindi.
-6. Provide concise, clear, well-structured answers using markdown, bullet points, and code blocks where helpful.`,
+CRITICAL INSTRUCTION - LANGUAGE & SCRIPT MIRRORING:
+1. When user writes in Manglish (Telugu words typed using English/Latin alphabet, e.g. "nuvu ella vunav", "em chestunnav", "nenu em cheyali", "naku help kavali", "bagunava"):
+   -> YOU MUST REPLY IN MANGLISH (Telugu in English letters) ONLY!
+   Example:
+   User: "nuvu ella vunav"
+   AskMe: "Nenu chala bagunnanu! Meeru ela unnaru? Ivala meeku nenu ela help cheyagalanu?"
+2. When user writes in pure Telugu script (తెలుగు లిపి, e.g. "నువ్వు ఎలా ఉన్నావు?", "నమస్కారం"):
+   -> YOU MUST REPLY IN PURE TELUGU SCRIPT!
+   Example:
+   User: "నువ్వు ఎలా ఉన్నావు?"
+   AskMe: "నేను చాలా బాగున్నాను! మీరు ఎలా ఉన్నారు? మీకు నేను ఈరోజు ఎలా సహాయపడగలను?"
+3. When user writes in English:
+   -> Reply in clear, natural English.
+4. When user writes in Hindi:
+   -> Reply in Hindi (match Hinglish if typed in Latin letters, or Devanagari if in Hindi script).
+5. If the user attaches an image with a doubt, question, or math problem:
+   -> Carefully analyze the visual contents, formulas, text, diagrams, or questions in the image and provide a thorough, step-by-step solution and answer in the matching language!`,
   temperature: 0.7,
+  speechLanguage: 'te-IN',
 };
 
 export async function sendChatMessage(
   history: Message[],
   userPrompt: string,
+  image: string | undefined,
   settings: AISettings,
   onChunk?: (chunk: string) => void
 ): Promise<string> {
   const provider = settings.provider;
 
-  // If user selected Gemini and provided API key
+  // 1. If Gemini is selected or if image is provided with Gemini key
   if (provider === 'gemini' && settings.geminiApiKey.trim()) {
     try {
-      return await callGemini(history, userPrompt, settings, onChunk);
+      return await callGemini(history, userPrompt, image, settings, onChunk);
     } catch (err: any) {
       console.warn('Gemini failed, falling back to AskMe Engine:', err);
-      return await callAskMeBackend(history, userPrompt, settings, onChunk);
+      return await callAskMeBackend(history, userPrompt, image, settings, onChunk);
     }
   }
 
-  // If user selected OpenAI and provided API key
+  // 2. If OpenAI is selected with API key
   if (provider === 'openai' && settings.openaiApiKey.trim()) {
     try {
-      return await callOpenAI(history, userPrompt, settings, onChunk);
+      return await callOpenAI(history, userPrompt, image, settings, onChunk);
     } catch (err: any) {
       console.warn('OpenAI failed, falling back to AskMe Engine:', err);
-      return await callAskMeBackend(history, userPrompt, settings, onChunk);
+      return await callAskMeBackend(history, userPrompt, image, settings, onChunk);
     }
   }
 
-  // Default: Reliable AskMe Engine (No API key required, zero 403 errors!)
-  return await callAskMeBackend(history, userPrompt, settings, onChunk);
+  // 3. If image is attached but user hasn't added Gemini key, check if we can still analyze via backend
+  return await callAskMeBackend(history, userPrompt, image, settings, onChunk);
 }
 
-// AskMe Backend Proxy (Guaranteed to bypass CORS and 403 errors on Desktop & Android)
+// AskMe Backend Proxy (Guaranteed to bypass CORS and 403 on Android and Web)
 async function callAskMeBackend(
   history: Message[],
   userPrompt: string,
+  image: string | undefined,
   settings: AISettings,
   onChunk?: (chunk: string) => void
 ): Promise<string> {
-  const messagesPayload = history.slice(-8).map((m) => ({
+  const messagesPayload = history.slice(-6).map((m) => ({
     role: m.role === 'assistant' ? 'assistant' : 'user',
     content: m.content,
   }));
@@ -70,7 +83,8 @@ async function callAskMeBackend(
       },
       body: JSON.stringify({
         messages: messagesPayload,
-        prompt: userPrompt,
+        prompt: userPrompt || (image ? 'Please analyze this image and explain what is inside it.' : 'Hello'),
+        image,
         systemPrompt: settings.systemPrompt || DEFAULT_AI_SETTINGS.systemPrompt,
       }),
     });
@@ -84,16 +98,27 @@ async function callAskMeBackend(
       return text;
     }
   } catch (backendErr) {
-    console.warn('Local /api/chat error, attempting direct fallback...', backendErr);
+    console.warn('Backend proxy error, attempting direct fallback...', backendErr);
   }
 
-  // Fallback to GET endpoint with encoded query if proxy unreachable
+  // Direct fallback
   try {
-    const promptEnc = encodeURIComponent(userPrompt);
-    const systemEnc = encodeURIComponent(settings.systemPrompt || DEFAULT_AI_SETTINGS.systemPrompt);
-    const directRes = await fetch(`https://text.pollinations.ai/${promptEnc}?model=openai&system=${systemEnc}`);
-    if (directRes.ok) {
-      const text = await directRes.text();
+    const promptToSend = userPrompt || 'Hello AskMe';
+    const res = await fetch('https://text.pollinations.ai/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        messages: [
+          { role: 'system', content: settings.systemPrompt || DEFAULT_AI_SETTINGS.systemPrompt },
+          { role: 'user', content: promptToSend }
+        ],
+        model: 'openai-fast',
+        seed: Math.floor(Math.random() * 100000),
+      })
+    });
+
+    if (res.ok) {
+      const text = await res.text();
       if (onChunk) {
         await simulateStream(text, onChunk);
       }
@@ -103,13 +128,14 @@ async function callAskMeBackend(
     console.warn('Direct fallback error:', directErr);
   }
 
-  throw new Error('Unable to connect to AskMe AI. Please verify internet connection or add a Gemini API key in Settings.');
+  throw new Error('Unable to connect to AskMe AI. Please check internet connection or configure an API key in Settings (⚙️).');
 }
 
-// Google Gemini API Call
+// Google Gemini API Call with Multimodal Vision Support
 async function callGemini(
   history: Message[],
   userPrompt: string,
+  image: string | undefined,
   settings: AISettings,
   onChunk?: (chunk: string) => void
 ): Promise<string> {
@@ -118,8 +144,9 @@ async function callGemini(
 
   const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
 
-  const contents = [];
-  const recentHistory = history.slice(-10);
+  const contents: any[] = [];
+  const recentHistory = history.slice(-8);
+
   for (const msg of recentHistory) {
     contents.push({
       role: msg.role === 'user' ? 'user' : 'model',
@@ -127,9 +154,27 @@ async function callGemini(
     });
   }
 
+  const currentParts: any[] = [];
+
+  // If image is attached (data:image/jpeg;base64,...), extract mimeType and base64
+  if (image && image.startsWith('data:')) {
+    const [meta, base64Data] = image.split(';base64,');
+    const mimeType = meta.replace('data:', '') || 'image/jpeg';
+    currentParts.push({
+      inlineData: {
+        mimeType,
+        data: base64Data,
+      },
+    });
+  }
+
+  currentParts.push({
+    text: userPrompt || (image ? 'Please analyze this image, solve the question/doubt, and explain step-by-step.' : 'Hello'),
+  });
+
   contents.push({
     role: 'user',
-    parts: [{ text: userPrompt }],
+    parts: currentParts,
   });
 
   const payload: any = {
@@ -171,10 +216,11 @@ async function callGemini(
   return text;
 }
 
-// OpenAI API Call
+// OpenAI API Call with Vision Support
 async function callOpenAI(
   history: Message[],
   userPrompt: string,
+  image: string | undefined,
   settings: AISettings,
   onChunk?: (chunk: string) => void
 ): Promise<string> {
@@ -190,7 +236,7 @@ async function callOpenAI(
     });
   }
 
-  const recentHistory = history.slice(-10);
+  const recentHistory = history.slice(-8);
   for (const msg of recentHistory) {
     messages.push({
       role: msg.role === 'user' ? 'user' : 'assistant',
@@ -198,9 +244,23 @@ async function callOpenAI(
     });
   }
 
+  const userContent: any[] = [];
+  if (userPrompt) {
+    userContent.push({ type: 'text', text: userPrompt });
+  } else if (image) {
+    userContent.push({ type: 'text', text: 'Please analyze this image, solve any question shown, and explain.' });
+  }
+
+  if (image) {
+    userContent.push({
+      type: 'image_url',
+      image_url: { url: image },
+    });
+  }
+
   messages.push({
     role: 'user',
-    content: userPrompt,
+    content: userContent,
   });
 
   const response = await fetch('https://api.openai.com/v1/chat/completions', {
@@ -232,7 +292,7 @@ async function callOpenAI(
   return text;
 }
 
-// Simulated smooth word-by-word streaming
+// Smooth word-by-word streaming typing effect
 async function simulateStream(fullText: string, onChunk: (chunk: string) => void): Promise<void> {
   const words = fullText.split(/(\s+)/);
   let accumulated = '';
@@ -240,7 +300,7 @@ async function simulateStream(fullText: string, onChunk: (chunk: string) => void
   for (let i = 0; i < words.length; i++) {
     accumulated += words[i];
     onChunk(accumulated);
-    const delay = words[i].includes('\n') ? 20 : Math.min(12, Math.max(4, 300 / words.length));
+    const delay = words[i].includes('\n') ? 20 : Math.min(10, Math.max(3, 200 / words.length));
     await new Promise((r) => setTimeout(r, delay));
   }
 }

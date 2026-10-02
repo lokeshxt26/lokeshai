@@ -15,7 +15,8 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-const STORAGE_KEY = 'chatgpt_app_user';
+const CURRENT_USER_KEY = 'askme_current_user';
+const USERS_DB_KEY = 'askme_registered_users';
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
@@ -24,7 +25,31 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // Restore user session on initial load
   useEffect(() => {
     try {
-      const savedUser = localStorage.getItem(STORAGE_KEY);
+      // Initialize demo user if empty
+      const existingDb = localStorage.getItem(USERS_DB_KEY);
+      if (!existingDb) {
+        const defaultUsers: User[] = [
+          {
+            id: 'usr_demo_1',
+            name: 'Demo User',
+            email: 'demo.user@chatgpt.mobile',
+            password: 'demo1234',
+            avatar: 'https://api.dicebear.com/7.x/bottts/svg?seed=demo',
+            createdAt: new Date().toISOString(),
+          },
+          {
+            id: 'usr_lokesh',
+            name: 'Lokesh',
+            email: 'lokesh@askme.ai',
+            password: 'password123',
+            avatar: 'https://api.dicebear.com/7.x/bottts/svg?seed=lokesh',
+            createdAt: new Date().toISOString(),
+          }
+        ];
+        localStorage.setItem(USERS_DB_KEY, JSON.stringify(defaultUsers));
+      }
+
+      const savedUser = localStorage.getItem(CURRENT_USER_KEY);
       if (savedUser) {
         setUser(JSON.parse(savedUser));
       }
@@ -35,60 +60,104 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   }, []);
 
+  const getRegisteredUsers = (): User[] => {
+    try {
+      const db = localStorage.getItem(USERS_DB_KEY);
+      return db ? JSON.parse(db) : [];
+    } catch {
+      return [];
+    }
+  };
+
   const saveUserSession = (newUser: User) => {
     setUser(newUser);
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(newUser));
+      localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(newUser));
     } catch (e) {
       console.error('Failed to save user session:', e);
     }
   };
 
   const login = async (email: string, password: string): Promise<{ success: boolean; error?: string }> => {
-    // Basic validation
-    if (!email || !email.includes('@')) {
+    const cleanEmail = email.trim().toLowerCase();
+    const cleanPass = password.trim();
+
+    if (!cleanEmail || !cleanEmail.includes('@')) {
       return { success: false, error: 'Please enter a valid email address' };
     }
-    if (!password || password.length < 6) {
-      return { success: false, error: 'Password must be at least 6 characters' };
+    if (!cleanPass) {
+      return { success: false, error: 'Please enter your password' };
     }
 
-    // In a production app, verify against backend. Here we simulate successful auth
-    const derivedName = email.split('@')[0];
-    const formattedName = derivedName.charAt(0).toUpperCase() + derivedName.slice(1);
+    const users = getRegisteredUsers();
+    const foundUser = users.find((u) => u.email === cleanEmail);
 
-    const loggedUser: User = {
-      id: 'usr_' + Date.now(),
-      name: formattedName,
-      email: email.trim().toLowerCase(),
-      avatar: `https://api.dicebear.com/7.x/bottts/svg?seed=${encodeURIComponent(email)}`,
-      createdAt: new Date().toISOString(),
+    if (!foundUser) {
+      // If user doesn't exist, allow auto-creation or clear error
+      return {
+        success: false,
+        error: 'No account found with this email. Please click "Sign Up" above to create an account.',
+      };
+    }
+
+    if (foundUser.password && foundUser.password !== cleanPass) {
+      return { success: false, error: 'Incorrect password. Please try again.' };
+    }
+
+    const sessionUser: User = {
+      id: foundUser.id,
+      name: foundUser.name,
+      email: foundUser.email,
+      avatar: foundUser.avatar,
+      createdAt: foundUser.createdAt,
     };
 
-    saveUserSession(loggedUser);
+    saveUserSession(sessionUser);
     return { success: true };
   };
 
   const register = async (name: string, email: string, password: string): Promise<{ success: boolean; error?: string }> => {
-    if (!name.trim()) {
+    const cleanName = name.trim();
+    const cleanEmail = email.trim().toLowerCase();
+    const cleanPass = password.trim();
+
+    if (!cleanName) {
       return { success: false, error: 'Please enter your name' };
     }
-    if (!email || !email.includes('@')) {
+    if (!cleanEmail || !cleanEmail.includes('@')) {
       return { success: false, error: 'Please enter a valid email address' };
     }
-    if (!password || password.length < 6) {
+    if (cleanPass.length < 6) {
       return { success: false, error: 'Password must be at least 6 characters' };
+    }
+
+    const users = getRegisteredUsers();
+    if (users.some((u) => u.email === cleanEmail)) {
+      return { success: false, error: 'An account with this email already exists. Please Sign In.' };
     }
 
     const newUser: User = {
       id: 'usr_' + Date.now(),
-      name: name.trim(),
-      email: email.trim().toLowerCase(),
-      avatar: `https://api.dicebear.com/7.x/bottts/svg?seed=${encodeURIComponent(name)}`,
+      name: cleanName,
+      email: cleanEmail,
+      password: cleanPass,
+      avatar: `https://api.dicebear.com/7.x/bottts/svg?seed=${encodeURIComponent(cleanName)}`,
       createdAt: new Date().toISOString(),
     };
 
-    saveUserSession(newUser);
+    // Save to users database
+    const updatedUsers = [...users, newUser];
+    localStorage.setItem(USERS_DB_KEY, JSON.stringify(updatedUsers));
+
+    // Save session
+    saveUserSession({
+      id: newUser.id,
+      name: newUser.name,
+      email: newUser.email,
+      avatar: newUser.avatar,
+      createdAt: newUser.createdAt,
+    });
+
     return { success: true };
   };
 
@@ -105,9 +174,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const loginAsGuest = () => {
     const guestUser: User = {
-      id: 'usr_guest_' + Date.now(),
+      id: 'usr_guest',
       name: 'Guest User',
-      email: 'guest@chatgpt.mobile',
+      email: 'guest@askme.ai',
       avatar: 'https://api.dicebear.com/7.x/bottts/svg?seed=guest',
       createdAt: new Date().toISOString(),
     };
@@ -117,7 +186,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const logout = () => {
     setUser(null);
     try {
-      localStorage.removeItem(STORAGE_KEY);
+      localStorage.removeItem(CURRENT_USER_KEY);
     } catch (e) {
       console.error('Failed to remove user session:', e);
     }

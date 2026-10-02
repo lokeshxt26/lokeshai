@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
 import type { ChatSession, Message, AISettings } from '../types';
 import { DEFAULT_AI_SETTINGS, sendChatMessage } from '../services/aiService';
+import { useAuth } from './AuthContext';
 
 interface ChatContextType {
   sessions: ChatSession[];
@@ -11,7 +12,7 @@ interface ChatContextType {
   activeError: string | null;
   createNewChat: () => void;
   selectSession: (sessionId: string) => void;
-  sendMessage: (content: string) => Promise<void>;
+  sendMessage: (content: string, image?: string) => Promise<void>;
   regenerateResponse: (messageId: string) => Promise<void>;
   deleteSession: (sessionId: string) => void;
   renameSession: (sessionId: string, newTitle: string) => void;
@@ -20,15 +21,18 @@ interface ChatContextType {
   clearError: () => void;
 }
 
-const SESSIONS_STORAGE_KEY = 'chatgpt_app_sessions';
-const SETTINGS_STORAGE_KEY = 'chatgpt_app_settings';
+const SETTINGS_STORAGE_KEY = 'askme_app_settings';
 
 const ChatContext = createContext<ChatContextType | undefined>(undefined);
 
 export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const { user } = useAuth();
+  const userId = user?.id || 'guest';
+  const userStorageKey = `askme_sessions_${userId}`;
+
   const [sessions, setSessions] = useState<ChatSession[]>(() => {
     try {
-      const saved = localStorage.getItem(SESSIONS_STORAGE_KEY);
+      const saved = localStorage.getItem(userStorageKey);
       if (saved) return JSON.parse(saved);
     } catch (e) {
       console.error('Failed to load sessions:', e);
@@ -39,6 +43,25 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [currentSessionId, setCurrentSessionId] = useState<string>(() => {
     return sessions.length > 0 ? sessions[0].id : '';
   });
+
+  // Whenever the user logs in or switches account, reload their specific chat history!
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(`askme_sessions_${userId}`);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        setSessions(parsed);
+        setCurrentSessionId(parsed.length > 0 ? parsed[0].id : '');
+      } else {
+        setSessions([]);
+        setCurrentSessionId('');
+      }
+    } catch (e) {
+      console.error('Failed to switch user sessions:', e);
+      setSessions([]);
+      setCurrentSessionId('');
+    }
+  }, [userId]);
 
   const [settings, setSettings] = useState<AISettings>(() => {
     try {
@@ -54,16 +77,16 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [activeError, setActiveError] = useState<string | null>(null);
   const abortControllerRef = useRef<boolean>(false);
 
-  // Sync sessions to storage
+  // Sync current user's sessions to their personal storage key
   useEffect(() => {
     try {
-      localStorage.setItem(SESSIONS_STORAGE_KEY, JSON.stringify(sessions));
+      localStorage.setItem(`askme_sessions_${userId}`, JSON.stringify(sessions));
     } catch (e) {
       console.error('Failed to save sessions:', e);
     }
-  }, [sessions]);
+  }, [sessions, userId]);
 
-  // Sync settings to storage
+  // Sync settings
   useEffect(() => {
     try {
       localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(settings));
@@ -72,13 +95,13 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   }, [settings]);
 
-  // Current session object
   const currentSession = sessions.find((s) => s.id === currentSessionId) || null;
 
   const createNewChat = () => {
     const newSessionId = 'chat_' + Date.now();
     const newSession: ChatSession = {
       id: newSessionId,
+      userId,
       title: 'New Chat',
       messages: [],
       createdAt: Date.now(),
@@ -115,6 +138,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const clearAllSessions = () => {
     setSessions([]);
     setCurrentSessionId('');
+    localStorage.removeItem(`askme_sessions_${userId}`);
   };
 
   const updateSettings = (newSettings: Partial<AISettings>) => {
@@ -123,18 +147,20 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const clearError = () => setActiveError(null);
 
-  const sendMessage = async (userPrompt: string) => {
-    if (!userPrompt.trim() || isGenerating) return;
+  const sendMessage = async (userPrompt: string, image?: string) => {
+    if ((!userPrompt.trim() && !image) || isGenerating) return;
 
     let targetSessionId = currentSessionId;
     let targetSession = sessions.find((s) => s.id === targetSessionId);
 
-    // If no session exists, create one first
+    const promptTitle = userPrompt.trim() || (image ? '📷 Image Doubt' : 'New Chat');
+    const firstTitle = promptTitle.length > 28 ? promptTitle.substring(0, 28) + '...' : promptTitle;
+
     if (!targetSession) {
       const newSessionId = 'chat_' + Date.now();
-      const firstTitle = userPrompt.length > 30 ? userPrompt.substring(0, 30) + '...' : userPrompt;
       targetSession = {
         id: newSessionId,
+        userId,
         title: firstTitle,
         messages: [],
         createdAt: Date.now(),
@@ -145,8 +171,6 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setCurrentSessionId(newSessionId);
       targetSessionId = newSessionId;
     } else if (targetSession.messages.length === 0) {
-      // Set title from first message
-      const firstTitle = userPrompt.length > 30 ? userPrompt.substring(0, 30) + '...' : userPrompt;
       targetSession.title = firstTitle;
     }
 
@@ -154,6 +178,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       id: 'msg_user_' + Date.now(),
       role: 'user',
       content: userPrompt.trim(),
+      image,
       timestamp: Date.now(),
     };
 
@@ -167,13 +192,12 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       modelUsed: settings.provider,
     };
 
-    // Append user message and placeholder assistant message
     setSessions((prev) =>
       prev.map((s) =>
         s.id === targetSessionId
           ? {
               ...s,
-              title: s.messages.length === 0 ? (userPrompt.length > 30 ? userPrompt.substring(0, 30) + '...' : userPrompt) : s.title,
+              title: s.messages.length === 0 ? firstTitle : s.title,
               messages: [...s.messages, userMessage, assistantMessage],
               updatedAt: Date.now(),
             }
@@ -191,10 +215,10 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       await sendChatMessage(
         currentHistory,
         userPrompt,
+        image,
         settings,
         (partialText) => {
           if (abortControllerRef.current) return;
-          // Update streaming message in state
           setSessions((prev) =>
             prev.map((s) =>
               s.id === targetSessionId
@@ -226,7 +250,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         )
       );
     } catch (err: any) {
-      const errorMessage = err.message || 'An error occurred while communicating with AI.';
+      const errorMessage = err.message || 'Error occurred while contacting AskMe AI.';
       setActiveError(errorMessage);
       setSessions((prev) =>
         prev.map((s) =>
@@ -237,7 +261,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
                   m.id === assistantPlaceholderId
                     ? {
                         ...m,
-                        content: `⚠️ Error: ${errorMessage}\n\nPlease check your internet connection or configure your API key in Settings (⚙️).`,
+                        content: `⚠️ Error: ${errorMessage}`,
                         error: true,
                         isStreaming: false,
                       }
@@ -261,7 +285,6 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const prevUserMessage = currentSession.messages[messageIndex - 1];
     if (prevUserMessage.role !== 'user') return;
 
-    // Reset this message to streaming placeholder
     setSessions((prev) =>
       prev.map((s) =>
         s.id === currentSessionId
@@ -283,6 +306,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       await sendChatMessage(
         historyUntilPrompt,
         prevUserMessage.content,
+        prevUserMessage.image,
         settings,
         (partialText) => {
           setSessions((prev) =>
